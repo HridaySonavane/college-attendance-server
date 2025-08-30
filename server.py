@@ -1,11 +1,12 @@
-from typing import List
-from pydantic import BaseModel
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import os
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from typing import List
+from pydantic import BaseModel
 
-# ---------------- FASTAPI SETUP ----------------
 app = FastAPI()
 
 app.add_middleware(
@@ -16,21 +17,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- GOOGLE SHEETS SETUP ----------------
-# Define scope
+# 🔑 Google Sheets setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
-# Load credentials (replace 'credentials.json' with your downloaded JSON file)
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+# Read JSON credentials from environment variable
+creds_json = os.getenv("GOOGLE_CREDENTIALS")
+creds_dict = json.loads(creds_json)
 
-# Authorize
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-# Open the sheet by name (or use `open_by_key` if you have the sheet ID)
-sheet = client.open("Attendance").sheet1  # Change "Attendance" to your Google Sheet name
+# Open sheet by name (replace "Attendance" with your sheet name)
+sheet = client.open("Attendance").sheet1
 
 
-# ---------------- EXISTING STUDENT DATA ----------------
 students = {
     272: "Aryan Pandey",
     282: "Dhanshri Patil",
@@ -49,33 +49,18 @@ students = {
 class EnrollmentRequest(BaseModel):
     ids: List[int]
 
-
-# ---------------- ROUTES ----------------
 @app.post("/students")
 async def get_students(data: EnrollmentRequest):
     result = {i: students.get(i, "Not Found") for i in data.ids}
+    # Save attendance in Google Sheets
+    for i in data.ids:
+        sheet.append_row([i, students.get(i, "Not Found")])
     return result
-
-
-@app.post("/attendance")
-async def mark_attendance(data: EnrollmentRequest):
-    """Mark attendance in Google Sheet for given IDs"""
-    for student_id in data.ids:
-        name = students.get(student_id, None)
-        if name:
-            # Append a new row [ID, Name, "Present"]
-            sheet.append_row([student_id, name, "Present"])
-        else:
-            sheet.append_row([student_id, "Unknown", "Not Found"])
-    return {"status": "Attendance marked successfully"}
-
 
 @app.get("/attendance")
 async def get_attendance():
-    """Fetch all attendance records from Google Sheet"""
     records = sheet.get_all_records()
     return {"attendance": records}
-
 
 @app.get("/")
 async def read_root():
